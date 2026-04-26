@@ -1,32 +1,49 @@
-export type ProductSource = 'xml' | 'ocr' | 'manual';
+export type ProductSource = 'xml' | 'ocr' | 'manual' | 'pdf' | 'image';
 
 export type Product = {
   id: string;
   name: string;
   code: string;
   description?: string;
-  quantity: number;
-  unit?: string;
-  price: number;
-  totalPrice: number;
-  currency: string;
+  createdAt: string;
   updatedAt: string;
 };
 
-export type PriceEntry = {
+export type Purchase = {
   id: string;
+  storeName: string;
+  purchaseDate: string;
+  totalAmount: number;
+  source: ProductSource;
+  sourceFile?: string;
+  notes?: string;
+  createdAt: string;
+};
+
+export type PurchaseItem = {
+  id: string;
+  purchaseId: string;
   productId: string;
+  productName?: string;
+  productCode?: string;
   price: number;
-  currency: string;
-  origin: ProductSource;
-  capturedAt: string;
+  quantity?: number;
 };
 
-export type UploadResponse = {
-  products: Product[];
+export type PurchaseDetail = {
+  purchase: Purchase;
+  items: PurchaseItem[];
 };
 
-export type UploadStep = 'upload' | 'review' | 'history';
+export type PriceHistoryEntry = {
+  id: string;
+  price: number;
+  quantity?: number;
+  storeName?: string;
+  source?: string;
+};
+
+export type UploadStep = 'upload' | 'review';
 
 // Backend API types
 export interface BackendProduct {
@@ -40,33 +57,48 @@ export interface BackendProduct {
   updatedAt: string;
 }
 
-export interface BackendPriceEntry {
+export interface BackendPurchase {
   _id: string;
+  userId: string;
+  storeName: string;
+  purchaseDate: string;
+  totalAmount: number;
+  source: ProductSource;
+  sourceFile?: string;
+  notes?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BackendPurchaseItem {
+  _id: string;
+  purchaseId:
+    | string
+    | { _id: string; storeName: string; purchaseDate: string; source: string };
   productId: string | { _id: string; name: string; code?: string };
   price: number;
   quantity?: number;
-  source: ProductSource;
-  date: string;
-  metadata?: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface BackendUploadResponse {
   success: boolean;
+  storeName?: string;
+  purchaseDate?: string;
   products: {
-    id: string;
     name: string;
-    code: string;
-    quantity: number;
-    unit?: string;
+    code?: string;
     price: number;
-    totalPrice: number;
-    priceEntryId: string;
+    quantity?: number;
+    resolvedName?: string;
   }[];
   metadata?: {
     fileName: string;
     fileType: string;
     processedAt: string;
+    itemCount: number;
+    totalAmount: number;
   };
 }

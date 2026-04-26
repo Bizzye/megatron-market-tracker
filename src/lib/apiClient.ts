@@ -1,9 +1,13 @@
 import axios from 'axios';
 import type {
-  PriceEntry,
   Product,
+  Purchase,
+  PurchaseItem,
+  PurchaseDetail,
+  PriceHistoryEntry,
   BackendProduct,
-  BackendPriceEntry,
+  BackendPurchase,
+  BackendPurchaseItem,
   BackendUploadResponse,
 } from './types';
 
@@ -27,41 +31,56 @@ client.interceptors.request.use(config => {
   return config;
 });
 
-const fallbackProducts: Product[] = [
-  {
-    id: 'sample-1',
-    name: 'Produto Demonstrativo',
-    code: 'SKU-001',
-    description: 'Item cadastrado para validação do fluxo',
-    quantity: 1,
-    unit: 'UN',
-    price: 19.9,
-    totalPrice: 19.9,
-    currency: 'BRL',
-    updatedAt: new Date().toISOString(),
-  },
-];
+// --- Helpers ---
 
-const fallbackHistory: PriceEntry[] = [
-  {
-    id: 'history-1',
-    productId: 'sample-1',
-    price: 18.5,
-    currency: 'BRL',
-    origin: 'ocr',
-    capturedAt: new Date().toISOString(),
-  },
-];
-
-async function safeRequest<T>(request: () => Promise<T>, fallback: T) {
-  try {
-    return await request();
-  } catch {
-    return fallback;
-  }
+function mapProduct(p: BackendProduct): Product {
+  return {
+    id: p._id,
+    name: p.name,
+    code: p.code || '',
+    description: p.description,
+    createdAt: p.createdAt,
+    updatedAt: p.updatedAt,
+  };
 }
 
-// Auth API
+function mapPurchase(p: BackendPurchase): Purchase {
+  return {
+    id: p._id,
+    storeName: p.storeName,
+    totalAmount: p.totalAmount,
+    source: p.source,
+    sourceFile: p.sourceFile,
+    notes: p.notes,
+    purchaseDate: p.purchaseDate,
+    createdAt: p.createdAt,
+  };
+}
+
+function mapPurchaseItem(item: BackendPurchaseItem): PurchaseItem {
+  const productId =
+    typeof item.productId === 'string' ? item.productId : item.productId._id;
+  const productName =
+    typeof item.productId === 'object' ? item.productId.name : undefined;
+  const productCode =
+    typeof item.productId === 'object' ? item.productId.code : undefined;
+
+  return {
+    id: item._id,
+    purchaseId:
+      typeof item.purchaseId === 'string'
+        ? item.purchaseId
+        : item.purchaseId._id,
+    productId,
+    productName,
+    productCode,
+    price: item.price,
+    quantity: item.quantity,
+  };
+}
+
+// --- Auth API ---
+
 export async function register(email: string, password: string, name: string) {
   const { data } = await client.post<{
     user: { id: string; email: string; name: string };
@@ -96,26 +115,51 @@ export function getCurrentUser() {
   return user ? JSON.parse(user) : null;
 }
 
-// Products API
-export function getProducts(): Promise<Product[]> {
-  return safeRequest(async () => {
-    const { data } = await client.get<BackendProduct[]>('/products');
-    // Transformar resposta do backend para o formato do frontend
-    return data.map(
-      (p): Product => ({
-        id: p._id,
-        name: p.name,
-        code: p.code || '',
-        description: p.description,
-        quantity: 0,
-        unit: undefined,
-        price: 0,
-        totalPrice: 0,
-        currency: 'BRL',
-        updatedAt: p.updatedAt,
-      })
-    );
-  }, fallbackProducts);
+// --- Products API ---
+
+export async function getProducts(): Promise<Product[]> {
+  const { data } = await client.get<BackendProduct[]>('/products');
+  return data.map(mapProduct);
+}
+
+export async function searchProducts(query: string): Promise<Product[]> {
+  const { data } = await client.get<BackendProduct[]>('/products/search', {
+    params: { q: query },
+  });
+  return data.map(mapProduct);
+}
+
+export async function getProductById(id: string): Promise<Product> {
+  const { data } = await client.get<BackendProduct>(`/products/${id}`);
+  return mapProduct(data);
+}
+
+export async function getProductHistory(
+  productId: string
+): Promise<PriceHistoryEntry[]> {
+  const { data } = await client.get<BackendPurchaseItem[]>(
+    `/products/${productId}/history`
+  );
+  return data.map((entry): PriceHistoryEntry => {
+    const purchase =
+      typeof entry.purchaseId === 'object' ? entry.purchaseId : null;
+    return {
+      id: entry._id,
+      price: entry.price,
+      quantity: entry.quantity,
+      storeName: purchase?.storeName,
+      source: purchase?.source,
+    };
+  });
+}
+
+export async function getProductPurchases(
+  productId: string
+): Promise<Purchase[]> {
+  const { data } = await client.get<BackendPurchase[]>(
+    `/products/${productId}/purchases`
+  );
+  return data.map(mapPurchase);
 }
 
 export async function createProduct(product: {
@@ -124,18 +168,7 @@ export async function createProduct(product: {
   description?: string;
 }): Promise<Product> {
   const { data } = await client.post<BackendProduct>('/products', product);
-  return {
-    id: data._id,
-    name: data.name,
-    code: data.code || '',
-    description: data.description,
-    quantity: 0,
-    unit: undefined,
-    price: 0,
-    totalPrice: 0,
-    currency: 'BRL',
-    updatedAt: data.updatedAt,
-  };
+  return mapProduct(data);
 }
 
 export async function updateProduct(
@@ -146,111 +179,77 @@ export async function updateProduct(
     `/products/${id}`,
     product
   );
-  return {
-    id: data._id,
-    name: data.name,
-    code: data.code || '',
-    description: data.description,
-    quantity: 0,
-    unit: undefined,
-    price: 0,
-    totalPrice: 0,
-    currency: 'BRL',
-    updatedAt: data.updatedAt,
-  };
+  return mapProduct(data);
 }
 
 export async function deleteProduct(id: string) {
   await client.delete(`/products/${id}`);
 }
 
-// History API
-export function getHistory(): Promise<PriceEntry[]> {
-  return safeRequest(async () => {
-    const { data } = await client.get<BackendPriceEntry[]>('/history');
-    // Transformar resposta do backend para o formato do frontend
-    return data.map(
-      (entry): PriceEntry => ({
-        id: entry._id,
-        productId:
-          typeof entry.productId === 'string'
-            ? entry.productId
-            : entry.productId._id,
-        price: entry.price,
-        currency: 'BRL',
-        origin: entry.source,
-        capturedAt: entry.date || entry.createdAt,
-      })
-    );
-  }, fallbackHistory);
+// --- Purchases API ---
+
+export async function getPurchases(): Promise<Purchase[]> {
+  const { data } = await client.get<BackendPurchase[]>('/purchases');
+  return data.map(mapPurchase);
 }
 
-export async function getProductHistory(
-  productId: string
-): Promise<PriceEntry[]> {
-  const { data } = await client.get<BackendPriceEntry[]>(
-    `/products/${productId}/history`
-  );
-  return data.map(
-    (entry): PriceEntry => ({
-      id: entry._id,
-      productId: entry.productId as string,
-      price: entry.price,
-      currency: 'BRL',
-      origin: entry.source,
-      capturedAt: entry.date || entry.createdAt,
-    })
-  );
+export async function getPurchaseById(id: string): Promise<PurchaseDetail> {
+  const { data } = await client.get<{
+    purchase: BackendPurchase;
+    items: BackendPurchaseItem[];
+  }>(`/purchases/${id}`);
+  return {
+    purchase: mapPurchase(data.purchase),
+    items: data.items.map(mapPurchaseItem),
+  };
 }
 
-// Upload API
+export async function createPurchase(input: {
+  storeName: string;
+  date?: string;
+  totalAmount?: number;
+  notes?: string;
+  source?: string;
+  items: { name: string; code?: string; price: number; quantity?: number }[];
+}): Promise<PurchaseDetail> {
+  const { data } = await client.post<{
+    purchase: BackendPurchase;
+    items: BackendPurchaseItem[];
+  }>('/purchases', input);
+  return {
+    purchase: mapPurchase(data.purchase),
+    items: data.items.map(mapPurchaseItem),
+  };
+}
+
+export async function deletePurchase(id: string) {
+  await client.delete(`/purchases/${id}`);
+}
+
+export async function updatePurchase(
+  id: string,
+  data: Partial<{
+    storeName: string;
+    date: string;
+    totalAmount: number;
+    notes: string;
+  }>
+): Promise<Purchase> {
+  const { data: updated } = await client.patch<BackendPurchase>(
+    `/purchases/${id}`,
+    data
+  );
+  return mapPurchase(updated);
+}
+
+// --- Upload API ---
+
 export async function uploadInvoice(file: File) {
   const body = new FormData();
   body.append('file', file);
   const { data } = await client.post<BackendUploadResponse>('/upload', body, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000,
   });
-
-  // Transformar resposta do backend para o formato do frontend
-  return {
-    products: data.products.map(
-      (p): Product => ({
-        id: p.id,
-        name: p.name,
-        code: p.code,
-        description: undefined,
-        quantity: p.quantity,
-        unit: p.unit,
-        price: p.price,
-        totalPrice: p.totalPrice,
-        currency: 'BRL',
-        updatedAt: new Date().toISOString(),
-      })
-    ),
-  };
-}
-
-export async function persistProduct(
-  product: Partial<Product> & { id: string }
-): Promise<Product> {
-  const { data } = await client.patch<BackendProduct>(
-    `/products/${product.id}`,
-    {
-      name: product.name,
-      code: product.code,
-      description: product.description,
-    }
-  );
-  return {
-    id: data._id,
-    name: data.name,
-    code: data.code || '',
-    description: data.description,
-    quantity: product.quantity || 0,
-    unit: product.unit,
-    price: product.price || 0,
-    totalPrice: product.totalPrice || 0,
-    currency: 'BRL',
-    updatedAt: data.updatedAt,
-  };
+  return data;
 }
